@@ -10,3 +10,4 @@ pyenchant
 Pillow
 pymongo
 python-dotenv
+deep-translator

@@ -8,6 +8,7 @@ from streamlit_extras.let_it_rain import rain
 import time
 import io
 from dotenv import load_dotenv
+from deep_translator import GoogleTranslator
 
 # --- App Logo + Title Header ---
 st.set_page_config(
@@ -116,10 +117,36 @@ if page == "Home":
 
 elif page == "ASL to Text":
     # --- ASL to Text Section (current main logic) ---
+    from deep_translator import GoogleTranslator
     mongo_client = pymongo.MongoClient('mongodb://localhost:27017/SIGN')
     mongo_db = mongo_client['SIGN']
     mongo_collection = mongo_db['sentences']
     load_dotenv()
+    
+    # Language selection (English default, scrollable)
+    lang_dict = {
+        'English': 'en',
+        'Arabic': 'ar',
+        'Bengali': 'bn',
+        'Chinese (Simplified)': 'zh-cn',
+        'French': 'fr',
+        'German': 'de',
+        'Gujarati': 'gu',
+        'Hindi': 'hi',
+        'Japanese': 'ja',
+        'Kannada': 'kn',
+        'Malayalam': 'ml',
+        'Marathi': 'mr',
+        'Punjabi': 'pa',
+        'Russian': 'ru',
+        'Spanish': 'es',
+        'Tamil': 'ta',
+        'Telugu': 'te',
+        'Urdu': 'ur',
+    }
+    lang_keys = ['English'] + sorted([k for k in lang_dict if k != 'English'])
+    lang_choice = st.selectbox("Select language for translation:", lang_keys, index=0)
+    target_lang = lang_dict[lang_choice]
     
     if st.button("Launch Sign Language Detection", help="Open the sign language detection window."):
         python_executable = sys.executable  # Path to the current Python interpreter
@@ -139,19 +166,22 @@ elif page == "ASL to Text":
         if sentence_doc and 'sentence' in sentence_doc:
             recent_sentence = sentence_doc['sentence']
             st.markdown(f"<div style='font-size:1.2em;color:#7b2ff2;font-weight:bold;'>{recent_sentence}</div>", unsafe_allow_html=True)
+            # Translate the sentence
+            if recent_sentence.strip():
+                try:
+                    translated_text = GoogleTranslator(source='auto', target=target_lang).translate(recent_sentence)
+                    st.markdown(f"<div style='font-size:1.1em;color:#43b97f;'><b>Translated ({lang_choice}):</b> {translated_text}</div>", unsafe_allow_html=True)
+                except Exception as e:
+                    st.warning(f"Translation error: {e}")
         else:
             recent_sentence = ""
             st.write("No message yet.")
     with col2:
         if st.button("🔊", help="Speak the recent message"):
             import pyttsx3
-            import threading
-            def speak_text(text):
-                engine = pyttsx3.init()
-                engine.say(text)
-                engine.runAndWait()
-            if recent_sentence.strip():
-                threading.Thread(target=speak_text, args=(recent_sentence,), daemon=True).start()
+            engine = pyttsx3.init()
+            engine.say(recent_sentence)
+            engine.runAndWait()
     with col3:
         if st.button("🔄", help="Refresh the recent message"):
             st.rerun()
@@ -251,7 +281,6 @@ elif page == "Text/Voice to Sign":
                 if os.path.exists("output_sign_sequence.mp4"):
                     with open("output_sign_sequence.mp4", "rb") as video_file:
                         video_bytes = video_file.read()
-                    st.video(io.BytesIO(video_bytes))
                     st.success("Video generated! You can download it below.")
                     with download_col:
                         st.download_button(
@@ -297,6 +326,8 @@ elif page == "AI Assistant":
         st.info("No question detected yet. Please use the ASL to Text feature to generate your question.")
         detected_question = ""
         ask_ai_disabled = True
+    if "ai_answer" not in st.session_state:
+        st.session_state["ai_answer"] = ""
     if st.button("Ask AI", key="ask_ai_btn", disabled=ask_ai_disabled):
         groq_api_key = os.getenv("GROQ_API_KEY")
         if not groq_api_key:
@@ -307,19 +338,25 @@ elif page == "AI Assistant":
                 api_key=groq_api_key,
                 base_url="https://api.groq.com/openai/v1"
             )
-            prompt = detected_question
+            # Improved prompt for simple, max 3-word answers
+            prompt = (
+                "Answer the following question as simply as possible, using a maximum of 3 words. "
+                "If the question cannot be answered simply, respond with 'Cannot answer'.\n\n"
+                f"Question: {detected_question}"
+            )
             with st.spinner("AI is thinking..."):
                 try:
                     response = client.chat.completions.create(
                         model="llama3-70b-8192",
                         messages=[
-                            {"role": "system", "content": "You are a helpful assistant for the deaf and hard of hearing. Answer clearly and concisely."},
+                            {"role": "system", "content": "You are a helpful assistant for the deaf and hard of hearing. Always answer as simply as possible, using a maximum of 3 words. If the question cannot be answered simply, respond with 'Cannot answer'."},
                             {"role": "user", "content": prompt}
                         ],
-                        max_tokens=256,
+                        max_tokens=20,
                         temperature=0.2
                     )
                     ai_answer = response.choices[0].message.content.strip()
+                    st.session_state["ai_answer"] = ai_answer
                     st.success(f"AI Response: {ai_answer}")
                     # Generate sign language video for the response
                     with st.spinner("Generating sign language video for the response..."):
@@ -330,7 +367,6 @@ elif page == "AI Assistant":
                     if os.path.exists("output_sign_sequence.mp4"):
                         with open("output_sign_sequence.mp4", "rb") as video_file:
                             video_bytes = video_file.read()
-                        st.video(io.BytesIO(video_bytes))
                         st.success("Sign language video generated! You can download it below.")
                         st.download_button(
                             label="⬇️ Download AI Response as Sign Language Video",
@@ -342,6 +378,14 @@ elif page == "AI Assistant":
                         st.error("Video could not be generated. Please try again.")
                 except Exception as e:
                     st.error(f"Groq API error: {e}")
+    # Speak AI Response button (works after rerun)
+    ai_answer = st.session_state.get("ai_answer", "")
+    if ai_answer and ai_answer.lower() != "cannot answer":
+        if st.button("🔊 Speak AI Response", key="speak_ai_response"):
+            import pyttsx3
+            engine = pyttsx3.init()
+            engine.say(ai_answer)
+            engine.runAndWait()
     st.markdown("</div>", unsafe_allow_html=True)
 
 
