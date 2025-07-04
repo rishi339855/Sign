@@ -1,0 +1,12 @@
+streamlit
+opencv-python
+numpy
+tensorflow
+keras
+cvzone
+mediapipe
+pyttsx3
+pyenchant
+Pillow
+pymongo
+python-dotenv
