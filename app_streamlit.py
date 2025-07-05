@@ -178,10 +178,17 @@ elif page == "ASL to Text":
             st.write("No message yet.")
     with col2:
         if st.button("🔊", help="Speak the recent message"):
-            import pyttsx3
-            engine = pyttsx3.init()
-            engine.say(recent_sentence)
-            engine.runAndWait()
+            try:
+                import pyttsx3
+                engine = pyttsx3.init()
+                engine.setProperty('rate', 150)
+                engine.say(recent_sentence)
+                engine.runAndWait()
+            except RuntimeError as e:
+                if "run loop already started" in str(e):
+                    st.warning("Text-to-speech is already running. Please wait a moment.")
+                else:
+                    st.error(f"Text-to-speech error: {e}")
     with col3:
         if st.button("🔄", help="Refresh the recent message"):
             st.rerun()
@@ -253,9 +260,6 @@ elif page == "ASL to Text":
                                 st.success(f"Groq LLM correction: {corrected}")
                             except Exception as e:
                                 st.error(f"Groq API error: {e}")
-            else:
-                st.info("No message to correct.")
-    st.markdown("<hr style='border:1px solid #eee; margin:2em 0;'>", unsafe_allow_html=True)
 
 elif page == "Text/Voice to Sign":
     # --- Text/Voice to Sign Section (video generation) ---
@@ -268,14 +272,119 @@ elif page == "Text/Voice to Sign":
     <div style='background: #eaf6f6; border-radius: 1.5em; padding: 2em 2em 1em 2em; margin-bottom: 2em;'>
         <div style='font-size:1.2em; color:#222; margin-bottom:1em;'>🎬 <b>Generate a Sign Language Video</b></div>
     """, unsafe_allow_html=True)
-    video_text = st.text_input("Enter text to generate sign language video:", key="video_text_input")
+    
+    # Initialize session state for video text
+    if "video_text" not in st.session_state:
+        st.session_state["video_text"] = ""
+    
+    # Input method selection
+    st.markdown("### Choose Input Method:")
+    
+    # Method 1: Typed Text
+    st.markdown("**1. Type Text:**")
+    typed_text = st.text_input("Enter text to generate sign language video:", key="video_text_input")
+    if typed_text.strip():
+        st.session_state["video_text"] = typed_text
+    
+    # Method 2: Recently Detected Word
+    st.markdown("**2. Use Recently Detected Word:**")
+    # Fetch latest detected sentence from MongoDB
+    mongo_client = pymongo.MongoClient('mongodb://localhost:27017/SIGN')
+    mongo_db = mongo_client['SIGN']
+    mongo_collection = mongo_db['sentences']
+    sentence_doc = mongo_collection.find_one({'_id': 'current'})
+    
+    if sentence_doc and 'sentence' in sentence_doc and sentence_doc['sentence'].strip():
+        recent_sentence = sentence_doc['sentence']
+        # Extract the last word from the sentence
+        words = recent_sentence.strip().split()
+        last_word = words[-1] if words else ""
+        
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            st.markdown(f"**Last detected word:** <span style='color:#7b2ff2;font-size:1.1em'>{last_word}</span>", unsafe_allow_html=True)
+        with col2:
+            if st.button("Use This Word", key="use_last_word_btn"):
+                st.session_state["video_text"] = last_word
+                st.success(f"Using word: {last_word}")
+    else:
+        st.info("No detected words available. Use ASL to Text feature first.")
+
+    # Method 2.5: Select from History
+    st.markdown("**2.5. Select from History:**")
+    # Fetch recent history for selection
+    history_docs = list(mongo_collection.find({'_id': {'$ne': 'current'}}).sort('timestamp', -1).limit(10))
+    if history_docs:
+        history_options = []
+        for doc in history_docs:
+            sentence = doc.get('sentence', '')
+            timestamp = doc.get('timestamp', '')
+            if hasattr(timestamp, 'strftime'):
+                formatted_time = timestamp.strftime("%H:%M:%S")
+            else:
+                formatted_time = str(timestamp)
+            history_options.append(f"{sentence} ({formatted_time})")
+        selected_history = st.selectbox(
+            "Choose from recent detections:",
+            ["Select a sentence..."] + history_options,
+            key="history_select"
+        )
+        if selected_history and selected_history != "Select a sentence...":
+            selected_sentence = selected_history.split(" (")[0]
+            if st.button("Use Selected Sentence", key="use_history_btn"):
+                st.session_state["video_text"] = selected_sentence
+                st.success(f"Using sentence: {selected_sentence}")
+    else:
+        st.info("No history available yet. Use ASL to Text feature to build history!")
+    
+    # Method 3: Voice Input
+    st.markdown("**3. Voice Input:**")
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        st.markdown("Click the button below and speak your text:")
+    with col2:
+        if st.button("🎤 Record Voice", key="voice_record_btn"):
+            try:
+                import speech_recognition as sr
+                recognizer = sr.Recognizer()
+                
+                with st.spinner("Listening... Speak now!"):
+                    with sr.Microphone() as source:
+                        # Adjust for ambient noise
+                        recognizer.adjust_for_ambient_noise(source, duration=0.5)
+                        audio = recognizer.listen(source, timeout=5, phrase_time_limit=10)
+                
+                with st.spinner("Processing speech..."):
+                    try:
+                        voice_text = recognizer.recognize_google(audio)
+                        st.session_state["video_text"] = voice_text
+                        st.success(f"Voice input: {voice_text}")
+                    except sr.UnknownValueError:
+                        st.error("Could not understand the audio. Please try again.")
+                    except sr.RequestError as e:
+                        st.error(f"Could not request results; {e}")
+            except ImportError:
+                st.error("Speech recognition not available. Please install SpeechRecognition and pyaudio packages.")
+                st.info("Run: pip install SpeechRecognition pyaudio")
+            except Exception as e:
+                st.error(f"Voice recording error: {e}")
+                st.info("Please ensure microphone is connected and permissions are granted.")
+    
+    # Display current selected text
+    if st.session_state["video_text"]:
+        st.markdown("---")
+        st.markdown(f"**Current text for video generation:** <span style='color:#43b97f;font-size:1.2em'>{st.session_state['video_text']}</span>", unsafe_allow_html=True)
+    
+    # Generate video section
+    st.markdown("---")
+    st.markdown("### Generate Video:")
     generate_col, download_col = st.columns([2, 2])
     with generate_col:
         if st.button("Generate Sign Language Video", key="generate_video_btn"):
-            if video_text.strip():
+            if st.session_state["video_text"].strip():
                 with st.spinner("Generating video, please wait..."):
                     result = subprocess.run([
-                        sys.executable, "text_to_sign_video.py", video_text
+                        sys.executable, "text_to_sign_video.py", st.session_state["video_text"]
                     ], capture_output=True, text=True)
                     time.sleep(1)
                 if os.path.exists("output_sign_sequence.mp4"):
@@ -292,7 +401,7 @@ elif page == "Text/Voice to Sign":
                 else:
                     st.error("Video could not be generated. Please try again.")
             else:
-                st.info("Please enter some text to generate the video.")
+                st.info("Please select or enter some text to generate the video.")
     st.markdown("</div>", unsafe_allow_html=True)
 
 elif page == "Real-Time Chat":
@@ -382,10 +491,19 @@ elif page == "AI Assistant":
     ai_answer = st.session_state.get("ai_answer", "")
     if ai_answer and ai_answer.lower() != "cannot answer":
         if st.button("🔊 Speak AI Response", key="speak_ai_response"):
-            import pyttsx3
-            engine = pyttsx3.init()
-            engine.say(ai_answer)
-            engine.runAndWait()
+            try:
+                import pyttsx3
+                engine = pyttsx3.init()
+                engine.setProperty('rate', 150)
+                engine.say(ai_answer)
+                engine.runAndWait()
+            except RuntimeError as e:
+                if "run loop already started" in str(e):
+                    st.warning("Text-to-speech is already running. Please wait a moment.")
+                else:
+                    st.error(f"Text-to-speech error: {e}")
+            except Exception as e:
+                st.error(f"Text-to-speech error: {e}")
     st.markdown("</div>", unsafe_allow_html=True)
 
 

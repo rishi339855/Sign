@@ -11,3 +11,5 @@ Pillow
 pymongo
 python-dotenv
 deep-translator
+SpeechRecognition
+pyaudio

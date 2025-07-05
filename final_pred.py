@@ -134,6 +134,11 @@ class Application:
         self.clear.place(x=1205, y=630)
         self.clear.config(text="🗑️ Clear", font=("Arial", 18, "bold"), wraplength=100, command=self.clear_fun)
 
+        # Add storage control buttons
+        self.store_btn = tk.Button(self.root, bg='#f39c12', fg='white', relief='flat', bd=0, cursor='hand2')
+        self.store_btn.place(x=1105, y=630)
+        self.store_btn.config(text="💾 Store", font=("Arial", 18, "bold"), wraplength=100, command=self.store_text)
+
         self.str = " "
         self.ccc=0
         self.word = " "
@@ -152,6 +157,9 @@ class Application:
         self.mongo_client = pymongo.MongoClient('mongodb://localhost:27017/SIGN')
         self.mongo_db = self.mongo_client['SIGN']
         self.mongo_collection = self.mongo_db['sentences']
+        
+        # Control flag for storing text
+        self.should_store_text = False
 
     def video_loop(self):
         ok, frame = self.vs.read()
@@ -239,7 +247,44 @@ class Application:
         return math.sqrt(((x[0] - y[0]) ** 2) + ((x[1] - y[1]) ** 2))
 
     def update_mongo_sentence(self):
+        # Always update the current sentence
         self.mongo_collection.update_one({'_id': 'current'}, {'$set': {'sentence': self.str}}, upsert=True)
+        
+        # Only store in history if explicitly requested (not during automatic detection)
+        # This will be called when the Store button is clicked
+        pass
+    
+    def store_text(self):
+        """Manually store the current text in history"""
+        sentence_clean = self.str.strip()
+        if len(sentence_clean) < 2:
+            print("Text must be at least 2 characters long to store.")
+            return
+        
+        # Check if this is a consecutive duplicate
+        last_doc = self.mongo_collection.find_one(
+            {'_id': {'$ne': 'current'}}, 
+            sort=[('timestamp', -1)]
+        )
+        is_duplicate = False
+        if last_doc and 'sentence' in last_doc:
+            is_duplicate = sentence_clean == last_doc['sentence'].strip()
+        
+        if is_duplicate:
+            print("This text is already stored (consecutive duplicate).")
+            return
+        
+        # Store the text
+        from datetime import datetime
+        history_doc = {
+            'sentence': sentence_clean,
+            'timestamp': datetime.now(),
+            'full_text': self.str,
+            'word_count': len(sentence_clean.split()),
+            'char_count': len(sentence_clean)
+        }
+        self.mongo_collection.insert_one(history_doc)
+        print(f"Successfully stored: '{sentence_clean}'")
 
     def action1(self):
         idx_space = self.str.rfind(" ")
